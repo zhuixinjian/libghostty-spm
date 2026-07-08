@@ -8,8 +8,8 @@
 #if canImport(AppKit) && !canImport(UIKit)
     import AppKit
 
-    public extension AppTerminalView {
-        internal func setupTrackingArea() {
+    extension AppTerminalView {
+        func setupTrackingArea() {
             let options: NSTrackingArea.Options = [
                 .mouseEnteredAndExited,
                 .mouseMoved,
@@ -25,29 +25,31 @@
             addTrackingArea(area)
         }
 
-        override func updateTrackingAreas() {
+        override open func updateTrackingAreas() {
             super.updateTrackingAreas()
             trackingAreas.forEach { removeTrackingArea($0) }
             setupTrackingArea()
         }
 
-        override var acceptsFirstResponder: Bool {
+        override open var acceptsFirstResponder: Bool {
             true
         }
 
-        override func becomeFirstResponder() -> Bool {
+        override open func becomeFirstResponder() -> Bool {
             let result = super.becomeFirstResponder()
             core.setFocus(true)
+            onFocusChange?(true)
             return result
         }
 
-        override func resignFirstResponder() -> Bool {
+        override open func resignFirstResponder() -> Bool {
             let result = super.resignFirstResponder()
             core.setFocus(false)
+            onFocusChange?(false)
             return result
         }
 
-        override func viewDidMoveToWindow() {
+        override open func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             removeWindowObservers()
             if window != nil {
@@ -76,20 +78,50 @@
                     name: NSWindow.didResignKeyNotification,
                     object: window
                 )
+                // Cross-display rescue: AppKit posts didChangeScreen when the
+                // window's screen reference changes, even when the new screen
+                // has the same backingScaleFactor (in which case
+                // viewDidChangeBackingProperties does not fire). Listening
+                // here lets us re-run metric sync on every screen transition
+                // — required for the case where two displays share scale but
+                // differ in geometry / color profile, and harmless when
+                // viewDidChangeBackingProperties also fires for the
+                // different-scale case.
+                NotificationCenter.default.addObserver(
+                    self,
+                    selector: #selector(windowDidChangeScreen),
+                    name: NSWindow.didChangeScreenNotification,
+                    object: window
+                )
             } else {
                 core.stopDisplayLink()
                 core.setFocus(false)
             }
         }
 
-        @objc internal func windowDidBecomeKey(_: Notification) {
+        @objc func windowDidBecomeKey(_: Notification) {
             let focused = window?.isKeyWindow == true
                 && window?.firstResponder === self
             core.setFocus(focused)
+            onFocusChange?(focused)
         }
 
-        @objc internal func windowDidResignKey(_: Notification) {
+        @objc func windowDidResignKey(_: Notification) {
             core.setFocus(false)
+            onFocusChange?(false)
+        }
+
+        @objc func windowDidChangeScreen(_: Notification) {
+            // Defer one runloop tick so AppKit's layout pass and the
+            // window's new backingScaleFactor have both settled before we
+            // re-derive metrics. Calling synchronously can race with the
+            // layout pass and re-introduce the drift we're trying to fix.
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                updateMetalLayerMetrics()
+                core.synchronizeMetrics()
+                core.requestImmediateTick()
+            }
         }
 
         private func removeWindowObservers() {
@@ -106,34 +138,57 @@
                 name: NSWindow.didResignKeyNotification,
                 object: nil
             )
+            NotificationCenter.default.removeObserver(
+                self,
+                name: NSWindow.didChangeScreenNotification,
+                object: nil
+            )
         }
 
-        override func setFrameSize(_ newSize: NSSize) {
+        override open func setFrameSize(_ newSize: NSSize) {
             super.setFrameSize(newSize)
-            core.synchronizeMetrics()
+            core.fitToSize()
             core.requestImmediateTick()
         }
 
-        override func layout() {
+        override open func layout() {
             super.layout()
-            core.synchronizeMetrics()
+            core.fitToSize()
             core.requestImmediateTick()
         }
 
-        override func viewDidChangeBackingProperties() {
+        override open func viewDidChangeBackingProperties() {
             super.viewDidChangeBackingProperties()
             updateMetalLayerMetrics()
-            core.synchronizeMetrics()
+            core.fitToSize()
             core.requestImmediateTick()
         }
 
-        func fitToSize() {
+        public func fitToSize() {
             core.fitToSize()
         }
 
-        internal func updateMetalLayerMetrics() {
+        func updateMetalLayerMetrics() {
             guard bounds.width > 0, bounds.height > 0 else { return }
             let scale = core.scaleFactor()
+            // Write to the actually-attached backing layer (not just the
+            // cached `metalLayer` ivar). The render pipeline can swap
+            // `self.layer` to an IOSurfaceLayer for IOSurface-backed
+            // compositing; once that happens the cached CAMetalLayer
+            // reference is detached from the view tree and writes to its
+            // contentsScale are no-ops as far as what's visible. The
+            // observable symptom is text rendered at half size after the
+            // window crosses to a display with a different
+            // backingScaleFactor.
+            layer?.contentsScale = scale
+            if let metal = layer as? CAMetalLayer {
+                metal.drawableSize = CGSize(
+                    width: bounds.width * scale,
+                    height: bounds.height * scale
+                )
+            }
+            // Mirror to the cached ivar in case anything else still
+            // reads through it during a transitional layout pass.
             metalLayer?.contentsScale = scale
             metalLayer?.drawableSize = CGSize(
                 width: bounds.width * scale,
@@ -141,26 +196,35 @@
             )
         }
 
-        internal func enforceMetalLayerScale() {
-            guard let metalLayer else { return }
+        func enforceMetalLayerScale() {
             let scale = core.scaleFactor()
-            if metalLayer.contentsScale != scale {
+            if let layer, layer.contentsScale != scale {
+                layer.contentsScale = scale
+            }
+            if let metalLayer, metalLayer.contentsScale != scale {
                 metalLayer.contentsScale = scale
             }
         }
 
-        override func viewDidChangeEffectiveAppearance() {
+        override open func viewDidChangeEffectiveAppearance() {
             super.viewDidChangeEffectiveAppearance()
             updateColorScheme()
         }
 
-        internal func updateColorScheme() {
+        func updateColorScheme() {
             let scheme: TerminalColorScheme = switch effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) {
             case .darkAqua: .dark
             default: .light
             }
             surface?.setColorScheme(scheme.ghosttyValue)
-            controller?.setColorScheme(scheme)
+            if let controller,
+               let viewState = delegate as? TerminalViewState,
+               viewState.controller === controller
+            {
+                viewState.adopt(terminalColorScheme: scheme)
+            } else {
+                controller?.setColorScheme(scheme)
+            }
         }
     }
 #endif

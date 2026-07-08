@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-SPM package wrapping Ghostty terminal emulator C library for Apple platforms (macOS 13+, iOS 16+, Mac Catalyst 16+). Four library products:
+SPM package wrapping Ghostty terminal emulator C library for Apple platforms (macOS 13+, iOS 15+, Mac Catalyst 15+). Four library products:
 
 - **GhosttyKit** — minimal re-export of the libghostty C API (`@_exported import libghostty`)
 - **GhosttyTerminal** — Swift wrapper: native views, SwiftUI integration, input handling, display link, host-managed I/O
@@ -49,7 +49,7 @@ GhosttyTerminal (Swift wrapper, ~40 files)
   ├─ Metrics/          Grid size, viewport dimensions, input/scroll modifiers
   ├─ Platform/AppKit/  macOS NSView: input, IME, key events
   ├─ Platform/UIKit/   iOS UIView: UITextInput, keyboard, touch/gesture, IME, input accessory bar
-  ├─ State/            @Observable TerminalViewState (SwiftUI state container)
+  ├─ State/            ObservableObject TerminalViewState (SwiftUI state container)
   ├─ Surface/          Metal rendering bridge, display link, surface lifecycle
   └─ View/             SwiftUI TerminalSurfaceView + platform representables
 
@@ -64,7 +64,7 @@ ShellCraftKit (~5 files)
   └─ Session/          ShellSession + Bridge + Engine
 ```
 
-Key types: `TerminalViewState` (@Observable, SwiftUI entry point), `TerminalSurfaceView` (SwiftUI view), `TerminalView` (platform typealias: UITerminalView / AppTerminalView), `TerminalController`, `InMemoryTerminalSession`, `GhosttyThemeDefinition`, `GhosttyThemeCatalog`.
+Key types: `TerminalViewState` (ObservableObject, SwiftUI entry point), `TerminalSurfaceView` (SwiftUI view), `TerminalView` (platform typealias: UITerminalView / AppTerminalView), `TerminalController`, `InMemoryTerminalSession`, `GhosttyThemeDefinition`, `GhosttyThemeCatalog`.
 
 ### Platform Branching
 
@@ -101,6 +101,10 @@ Files in `Platform/UIKit/`:
 
 The macOS equivalent uses `NSTextInputClient` in `AppTerminalView+NSTextInputClient.swift` with a parallel `TerminalTextInputHandler@AppKit.swift`.
 
+### iOS Long-Press Text Selection
+
+Long-press ≥0.5s on `UITerminalView` (single-finger, iOS only — Catalyst excluded) triggers `TerminalSurfaceTextSelectionRequestDelegate.terminalDidRequestTextSelection(_:)`. The host receives a `TerminalTextSelectionRequest` (viewport text snapshot + UTF-16 `NSRange?` for pre-selection + source point) and is expected to present a host UI (e.g. UITextView sheet). Word detection uses `ghostty_surface_quicklook_word` (Apple-only); `TerminalSelectionAnchor.resolveRange` maps the result to an `NSRange` via NSString UTF-16 calculations. Same-row duplicate occurrences are disambiguated by `pointX / cellWidthPoints`; callers must convert `cellPixels / displayScale → points` so ghostty's `tl_px_x/y` host-point units match. Prefix CJK full-width characters can shift cell-vs-UTF-16 columns and degrade disambiguation (ASCII-only correct, best-effort otherwise). The recognizer is gated by `gestureRecognizerShouldBegin` to stay inactive when no host has opted in. MVP supports only the `inMemory` backend.
+
 ### Manifest Sync
 
 When changing SwiftPM products, targets, or test dependencies, update all three together:
@@ -114,7 +118,7 @@ When changing SwiftPM products, targets, or test dependencies, update all three 
 - **4-space indentation**, opening brace on same line
 - PascalCase types, camelCase properties/methods
 - PascalCase files for types, `+` for extensions (e.g., `AppTerminalView+Input.swift`)
-- **@Observable macro** over ObservableObject/@Published
+- **ObservableObject/@Published** for SwiftUI state that must support iOS 15 / Mac Catalyst 15
 - **Swift concurrency**: async/await, Task, actor, @MainActor
 - Early returns, guard statements, single responsibility per type/extension
 - Value types over reference types, composition over inheritance

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import GhosttyKit
 @testable import GhosttyTerminal
@@ -5,7 +6,7 @@ import Testing
 
 struct TerminalHardwareKeyRouterTests {
     @Test
-    func routesUIKitArrowKeysDirectlyForInMemoryBackends() {
+    func `routes UI kit arrow keys directly for in memory backends`() {
         let session = InMemoryTerminalSession(write: { _ in }, resize: { _ in })
         #expect(
             TerminalHardwareKeyRouter.routeUIKit(
@@ -34,7 +35,7 @@ struct TerminalHardwareKeyRouterTests {
     }
 
     @Test
-    func routesUIKitKeysToGhosttyForExecBackends() {
+    func `routes UI kit keys to ghostty for exec backends`() {
         #expect(
             TerminalHardwareKeyRouter.routeUIKit(
                 usage: 0x50,
@@ -50,7 +51,7 @@ struct TerminalHardwareKeyRouterTests {
     }
 
     @Test
-    func routesModifiedUIKitArrowKeysToGhosttyForInMemoryBackends() {
+    func `routes modified UI kit arrow keys to ghostty for in memory backends`() {
         let session = InMemoryTerminalSession(write: { _ in }, resize: { _ in })
         #expect(
             TerminalHardwareKeyRouter.routeUIKit(
@@ -90,7 +91,7 @@ struct TerminalHardwareKeyRouterTests {
     }
 
     @Test
-    func routesAppKitArrowKeysDirectlyForInMemoryBackends() {
+    func `routes app kit arrow keys directly for in memory backends`() {
         let session = InMemoryTerminalSession(write: { _ in }, resize: { _ in })
         #expect(
             TerminalHardwareKeyRouter.routeAppKit(
@@ -113,7 +114,7 @@ struct TerminalHardwareKeyRouterTests {
     }
 
     @Test
-    func routesAppKitKeysToGhosttyForExecBackends() {
+    func `routes app kit keys to ghostty for exec backends`() {
         #expect(
             TerminalHardwareKeyRouter.routeAppKit(
                 keyCode: 0x7B,
@@ -128,19 +129,38 @@ struct TerminalHardwareKeyRouterTests {
         )
     }
 
+    @Test
+    func `app kit interpreted commands are replayed as key events`() {
+        #expect(
+            TerminalKeyEventHandler.shouldReplayInterpretedCommand(
+                #selector(NSResponder.insertTab(_:))
+            )
+        )
+        #expect(
+            TerminalKeyEventHandler.shouldReplayInterpretedCommand(
+                NSSelectorFromString("insertBacktab:")
+            )
+        )
+        #expect(
+            TerminalKeyEventHandler.shouldReplayInterpretedCommand(
+                #selector(NSResponder.moveUp(_:))
+            )
+        )
+    }
+
     /// Quote HID 0x34 must translate to AppKit keycode 0x27, not fall
     /// through to `0` (which is AppKit's keycode for the `A` key) nor to
     /// `GHOSTTY_KEY_QUOTE.rawValue` (which happens to equal AppKit's
     /// keycode for Tab — the original bug).
     @Test
-    func appKitKeyCodeForUIKitTranslatesQuoteToMacKeycode() {
+    func `app kit key code for UI kit translates quote to mac keycode`() {
         #expect(
             TerminalHardwareKeyRouter.appKitKeyCodeForUIKit(usage: 0x34) == 0x27
         )
     }
 
     @Test
-    func appKitKeyCodeForUIKitTranslatesCommonKeys() {
+    func `app kit key code for UI kit translates common keys`() {
         // Letter A: HID 0x04 → AppKit 0x00
         #expect(
             TerminalHardwareKeyRouter.appKitKeyCodeForUIKit(usage: 0x04) == 0x00
@@ -160,7 +180,7 @@ struct TerminalHardwareKeyRouterTests {
     }
 
     @Test
-    func appKitKeyCodeForGhosttyKeysTranslatesCommonKeys() {
+    func `app kit key code for ghostty keys translates common keys`() {
         #expect(
             TerminalHardwareKeyRouter.appKitKeyCode(for: GHOSTTY_KEY_A) == 0x00
         )
@@ -176,7 +196,7 @@ struct TerminalHardwareKeyRouterTests {
     }
 
     @Test
-    func appKitKeyCodeForGhosttyKeysTranslatesHigherFunctionAndVolumeKeys() {
+    func `app kit key code for ghostty keys translates higher function and volume keys`() {
         #expect(
             TerminalHardwareKeyRouter.appKitKeyCode(for: GHOSTTY_KEY_F17) == 0x40
         )
@@ -201,7 +221,7 @@ struct TerminalHardwareKeyRouterTests {
     }
 
     @Test
-    func appKitKeyCodeForGhosttyKeysReturnsSentinelForKeysAbsentFromMac() {
+    func `app kit key code for ghostty keys returns sentinel for keys absent from mac`() {
         let sentinel = TerminalHardwareKeyRouter.unidentifiedAppKitKeyCode
         #expect(
             TerminalHardwareKeyRouter.appKitKeyCode(for: GHOSTTY_KEY_CONTEXT_MENU) == sentinel
@@ -221,7 +241,7 @@ struct TerminalHardwareKeyRouterTests {
     /// (AppKit's keycode for `A`). They must return the sentinel so
     /// libghostty's native-keycode lookup resolves them to `.unidentified`.
     @Test
-    func appKitKeyCodeForUIKitReturnsSentinelForKeysAbsentFromMac() {
+    func `app kit key code for UI kit returns sentinel for keys absent from mac`() {
         let sentinel = TerminalHardwareKeyRouter.unidentifiedAppKitKeyCode
         // CUT, COPY, PASTE, CONTEXT_MENU, INSERT, PRINT_SCREEN, SCROLL_LOCK,
         // PAUSE and the higher function keys past F20 are in uiKitMap but
@@ -241,7 +261,7 @@ struct TerminalHardwareKeyRouterTests {
     }
 
     @Test
-    func appKitKeyCodeForUIKitTranslatesDivergentAndHigherFunctionKeys() {
+    func `app kit key code for UI kit translates divergent and higher function keys`() {
         #expect(
             TerminalHardwareKeyRouter.appKitKeyCodeForUIKit(usage: 0x53) == 0x47
         )
@@ -260,7 +280,7 @@ struct TerminalHardwareKeyRouterTests {
     }
 
     @Test
-    func appKitKeyCodeForUIKitTranslatesVolumeKeys() {
+    func `app kit key code for UI kit translates volume keys`() {
         #expect(
             TerminalHardwareKeyRouter.appKitKeyCodeForUIKit(usage: 0x7F) == 0x4A
         )
@@ -275,7 +295,7 @@ struct TerminalHardwareKeyRouterTests {
     /// The pinned Ghostty keycode table resolves the international backslash
     /// HID usage (`0x64`) to AppKit's ISO section keycode (`0x0A`).
     @Test
-    func appKitKeyCodeForUIKitTranslatesIntlBackslashKey() {
+    func `app kit key code for UI kit translates intl backslash key`() {
         #expect(
             TerminalHardwareKeyRouter.appKitKeyCodeForUIKit(usage: 0x64) == 0x0A
         )
@@ -286,7 +306,7 @@ struct TerminalHardwareKeyRouterTests {
     }
 
     @Test
-    func routeAppKitRecognizesHigherFunctionAndVolumeKeys() {
+    func `route app kit recognizes higher function and volume keys`() {
         #expect(
             TerminalHardwareKeyRouter.routeAppKit(
                 keyCode: 0x40,
@@ -314,10 +334,39 @@ struct TerminalHardwareKeyRouterTests {
     }
 
     @Test
-    func appKitKeyCodeForUIKitReturnsSentinelForUnknownHID() {
+    func `app kit key code for UI kit returns sentinel for unknown HID`() {
         // HID usages not in uiKitMap at all.
         let sentinel = TerminalHardwareKeyRouter.unidentifiedAppKitKeyCode
         #expect(TerminalHardwareKeyRouter.appKitKeyCodeForUIKit(usage: 0xFFFE) == sentinel)
         #expect(TerminalHardwareKeyRouter.appKitKeyCodeForUIKit(usage: 0x0001) == sentinel)
+    }
+
+    @Test
+    func `app kit direct input requires no modifiers`() {
+        #expect(
+            TerminalKeyEventHandler.shouldUseDirectInput(
+                modifierFlags: []
+            )
+        )
+        #expect(
+            !TerminalKeyEventHandler.shouldUseDirectInput(
+                modifierFlags: [.shift]
+            )
+        )
+        #expect(
+            !TerminalKeyEventHandler.shouldUseDirectInput(
+                modifierFlags: [.control]
+            )
+        )
+        #expect(
+            !TerminalKeyEventHandler.shouldUseDirectInput(
+                modifierFlags: [.option]
+            )
+        )
+        #expect(
+            !TerminalKeyEventHandler.shouldUseDirectInput(
+                modifierFlags: [.command]
+            )
+        )
     }
 }

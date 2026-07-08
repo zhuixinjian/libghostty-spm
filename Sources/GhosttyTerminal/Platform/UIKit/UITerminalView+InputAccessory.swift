@@ -8,8 +8,8 @@
     import UIKit
 
     extension UITerminalView {
-        override public var inputAccessoryView: UIView? {
-            terminalInputAccessory
+        override open var inputAccessoryView: UIView? {
+            inputAccessoryItems.isEmpty ? nil : terminalInputAccessory
         }
 
         func handleInputBarKey(_ key: TerminalInputBarKey) {

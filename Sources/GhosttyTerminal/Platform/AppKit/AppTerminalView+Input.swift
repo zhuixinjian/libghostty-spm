@@ -9,13 +9,12 @@
     import AppKit
     import GhosttyKit
 
-    public extension AppTerminalView {
-        override func keyDown(with event: NSEvent) {
-            core.requestImmediateTick()
+    extension AppTerminalView {
+        override open func keyDown(with event: NSEvent) {
             inputHandler?.handleKeyDown(with: event)
         }
 
-        override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        override open func performKeyEquivalent(with event: NSEvent) -> Bool {
             guard event.type == .keyDown else { return false }
             guard window?.firstResponder === self else { return false }
             guard let surface else { return false }
@@ -35,7 +34,8 @@
 
             case "/":
                 guard event.modifierFlags.contains(.control),
-                      event.modifierFlags.isDisjoint(with: [.shift, .command, .option]) else {
+                      event.modifierFlags.isDisjoint(with: [.shift, .command, .option])
+                else {
                     return false
                 }
                 equivalent = "_"
@@ -46,13 +46,15 @@
                 }
 
                 if !event.modifierFlags.contains(.command),
-                   !event.modifierFlags.contains(.control) {
+                   !event.modifierFlags.contains(.control)
+                {
                     lastPerformKeyEvent = nil
                     return false
                 }
 
                 if let lastPerformKeyEvent,
-                   lastPerformKeyEvent == event.timestamp {
+                   lastPerformKeyEvent == event.timestamp
+                {
                     self.lastPerformKeyEvent = nil
                     equivalent = event.characters ?? ""
                     break
@@ -81,23 +83,44 @@
             return true
         }
 
-        override func keyUp(with event: NSEvent) {
-            core.requestImmediateTick()
+        override open func keyUp(with event: NSEvent) {
             inputHandler?.handleKeyUp(with: event)
         }
 
-        override func flagsChanged(with event: NSEvent) {
-            core.requestImmediateTick()
+        override open func flagsChanged(with event: NSEvent) {
             inputHandler?.handleFlagsChanged(with: event)
         }
 
-        override func doCommand(by selector: Selector) {
+        override open func doCommand(by selector: Selector) {
             if let lastPerformKeyEvent,
                let current = NSApp.currentEvent,
                lastPerformKeyEvent == current.timestamp
             {
                 NSApp.sendEvent(current)
+                return
             }
+
+            if TerminalKeyEventHandler.shouldReplayInterpretedCommand(selector) {
+                inputHandler?.recordInterpretedCommand(selector)
+            }
+        }
+
+        @IBAction open func copy(_: Any?) {
+            _ = copySelectedTextToPasteboard()
+        }
+
+        @IBAction func paste(_: Any?) {
+            if let text = NSPasteboard.general.string(forType: .string) {
+                TerminalDebugLog.log(
+                    .input,
+                    "paste binding bytes=\(text.utf8.count) lines=\(TerminalInputText.lineCount(in: text))"
+                )
+            }
+            _ = surface?.performBindingAction("paste_from_clipboard")
+        }
+
+        @IBAction override open func selectAll(_: Any?) {
+            _ = surface?.performBindingAction("select_all")
         }
 
         internal func mousePoint(from event: NSEvent) -> (x: CGFloat, y: CGFloat) {
@@ -105,10 +128,12 @@
             return (point.x, bounds.height - point.y)
         }
 
-        override func mouseDown(with event: NSEvent) {
-            core.requestImmediateTick()
+        override open func mouseDown(with event: NSEvent) {
+            window?.makeFirstResponder(self)
             let (x, y) = mousePoint(from: event)
             let mods = TerminalInputModifiers(from: event.modifierFlags)
+            pointerSelectionStartPoint = CGPoint(x: x, y: y)
+            pendingSelectionMenuPoint = nil
             surface?.sendMousePos(x: x, y: y, mods: mods.ghosttyMods)
             surface?.sendMouseButton(
                 state: GHOSTTY_MOUSE_PRESS,
@@ -117,8 +142,7 @@
             )
         }
 
-        override func mouseUp(with event: NSEvent) {
-            core.requestImmediateTick()
+        override open func mouseUp(with event: NSEvent) {
             let (x, y) = mousePoint(from: event)
             let mods = TerminalInputModifiers(from: event.modifierFlags)
             surface?.sendMousePos(x: x, y: y, mods: mods.ghosttyMods)
@@ -127,13 +151,18 @@
                 button: GHOSTTY_MOUSE_LEFT,
                 mods: mods.ghosttyMods
             )
+            finishPointerSelection(at: CGPoint(x: x, y: y))
         }
 
-        override func rightMouseDown(with event: NSEvent) {
-            core.requestImmediateTick()
+        override open func rightMouseDown(with event: NSEvent) {
+            window?.makeFirstResponder(self)
             let (x, y) = mousePoint(from: event)
             let mods = TerminalInputModifiers(from: event.modifierFlags)
             surface?.sendMousePos(x: x, y: y, mods: mods.ghosttyMods)
+            if let menuPoint = selectionMenuPoint(at: CGPoint(x: x, y: y)) {
+                pendingSelectionMenuPoint = menuPoint
+                return
+            }
             surface?.sendMouseButton(
                 state: GHOSTTY_MOUSE_PRESS,
                 button: GHOSTTY_MOUSE_RIGHT,
@@ -141,11 +170,15 @@
             )
         }
 
-        override func rightMouseUp(with event: NSEvent) {
-            core.requestImmediateTick()
+        override open func rightMouseUp(with event: NSEvent) {
             let (x, y) = mousePoint(from: event)
             let mods = TerminalInputModifiers(from: event.modifierFlags)
             surface?.sendMousePos(x: x, y: y, mods: mods.ghosttyMods)
+            if pendingSelectionMenuPoint != nil {
+                pendingSelectionMenuPoint = nil
+                showSelectionCopyMenu(with: event)
+                return
+            }
             surface?.sendMouseButton(
                 state: GHOSTTY_MOUSE_RELEASE,
                 button: GHOSTTY_MOUSE_RIGHT,
@@ -153,8 +186,16 @@
             )
         }
 
-        override func otherMouseDown(with event: NSEvent) {
-            core.requestImmediateTick()
+        override open func menu(for event: NSEvent) -> NSMenu? {
+            let (x, y) = mousePoint(from: event)
+            guard selectionMenuPoint(at: CGPoint(x: x, y: y)) != nil else {
+                return super.menu(for: event)
+            }
+            return selectionContextMenu()
+        }
+
+        override open func otherMouseDown(with event: NSEvent) {
+            window?.makeFirstResponder(self)
             let (x, y) = mousePoint(from: event)
             let mods = TerminalInputModifiers(from: event.modifierFlags)
             surface?.sendMousePos(x: x, y: y, mods: mods.ghosttyMods)
@@ -165,8 +206,7 @@
             )
         }
 
-        override func otherMouseUp(with event: NSEvent) {
-            core.requestImmediateTick()
+        override open func otherMouseUp(with event: NSEvent) {
             let (x, y) = mousePoint(from: event)
             let mods = TerminalInputModifiers(from: event.modifierFlags)
             surface?.sendMousePos(x: x, y: y, mods: mods.ghosttyMods)
@@ -177,27 +217,27 @@
             )
         }
 
-        override func mouseMoved(with event: NSEvent) {
-            core.requestImmediateTick()
+        override open func mouseMoved(with event: NSEvent) {
             let (x, y) = mousePoint(from: event)
             let mods = TerminalInputModifiers(from: event.modifierFlags)
             surface?.sendMousePos(x: x, y: y, mods: mods.ghosttyMods)
         }
 
-        override func mouseDragged(with event: NSEvent) {
+        override open func mouseDragged(with event: NSEvent) {
+            let (x, y) = mousePoint(from: event)
+            updatePointerSelectionRect(to: CGPoint(x: x, y: y))
             mouseMoved(with: event)
         }
 
-        override func rightMouseDragged(with event: NSEvent) {
+        override open func rightMouseDragged(with event: NSEvent) {
             mouseMoved(with: event)
         }
 
-        override func otherMouseDragged(with event: NSEvent) {
+        override open func otherMouseDragged(with event: NSEvent) {
             mouseMoved(with: event)
         }
 
-        override func scrollWheel(with event: NSEvent) {
-            core.requestImmediateTick()
+        override open func scrollWheel(with event: NSEvent) {
             let scrollMods = TerminalScrollModifiers(
                 precision: event.hasPreciseScrollingDeltas,
                 momentum: TerminalScrollModifiers.momentumFrom(phase: event.momentumPhase)
@@ -207,6 +247,32 @@
                 y: event.scrollingDeltaY,
                 mods: scrollMods.rawValue
             )
+        }
+
+        private func updatePointerSelectionRect(to point: CGPoint) {
+            guard let start = pointerSelectionStartPoint else { return }
+            lastPointerSelectionRect = CGRect(
+                x: min(start.x, point.x),
+                y: min(start.y, point.y),
+                width: abs(start.x - point.x),
+                height: abs(start.y - point.y)
+            ).insetBy(dx: -2, dy: -2)
+        }
+
+        private func finishPointerSelection(at point: CGPoint) {
+            defer { pointerSelectionStartPoint = nil }
+            guard let start = pointerSelectionStartPoint else { return }
+            let dragDistance = hypot(point.x - start.x, point.y - start.y)
+            if dragDistance < 2 {
+                lastPointerSelectionRect = nil
+            } else {
+                updatePointerSelectionRect(to: point)
+            }
+        }
+
+        private func showSelectionCopyMenu(with event: NSEvent) {
+            let menu = selectionContextMenu()
+            NSMenu.popUpContextMenu(menu, with: event, for: self)
         }
 
         private func keyIsBinding(

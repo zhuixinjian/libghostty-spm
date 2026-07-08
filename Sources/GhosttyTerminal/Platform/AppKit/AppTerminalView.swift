@@ -10,28 +10,32 @@
     import GhosttyKit
 
     @MainActor
-    public final class AppTerminalView: NSView {
+    open class AppTerminalView: NSView {
         let core = TerminalSurfaceCoordinator()
         var metalLayer: CAMetalLayer?
         var inputHandler: TerminalKeyEventHandler?
         var lastPerformKeyEvent: TimeInterval?
+        var pointerSelectionStartPoint: CGPoint?
+        var lastPointerSelectionRect: CGRect?
+        var pendingSelectionMenuPoint: CGPoint?
+        var onFocusChange: ((Bool) -> Void)?
 
-        public weak var delegate: (any TerminalSurfaceViewDelegate)? {
+        open weak var delegate: (any TerminalSurfaceViewDelegate)? {
             get { core.delegate }
             set { core.delegate = newValue }
         }
 
-        public var controller: TerminalController? {
+        open var controller: TerminalController? {
             get { core.controller }
             set { core.controller = newValue }
         }
 
-        public var configuration: TerminalSurfaceOptions {
+        open var configuration: TerminalSurfaceOptions {
             get { core.configuration }
             set { core.configuration = newValue }
         }
 
-        public func setSurfaceVisible(_ visible: Bool) {
+        open func setSurfaceVisible(_ visible: Bool) {
             core.setDisplayVisible(visible)
         }
 
@@ -45,7 +49,7 @@
         }
 
         @available(*, unavailable)
-        required init?(coder _: NSCoder) {
+        public required init?(coder _: NSCoder) {
             fatalError("init(coder:) has not been implemented")
         }
 
@@ -92,6 +96,77 @@
             core.onPostRender = { [weak self] in
                 self?.enforceMetalLayerScale()
             }
+        }
+
+        open func selectionMenuPoint(at point: CGPoint) -> CGPoint? {
+            guard surface?.hasSelection() == true else {
+                TerminalDebugLog.log(
+                    .input,
+                    "selection menu miss point=\(selectionPointDescription(point))"
+                )
+                return nil
+            }
+
+            if let rect = lastPointerSelectionRect {
+                guard rect.insetBy(dx: -4, dy: -4).contains(point) else {
+                    TerminalDebugLog.log(
+                        .input,
+                        "selection menu miss point=\(selectionPointDescription(point)) outside pointer selection"
+                    )
+                    return nil
+                }
+
+                TerminalDebugLog.log(
+                    .input,
+                    "selection menu hit point=\(selectionPointDescription(point)) inside pointer selection"
+                )
+                return point
+            }
+
+            guard surface?.selectionContainsQuicklookWord() == true else {
+                TerminalDebugLog.log(
+                    .input,
+                    "selection menu miss point=\(selectionPointDescription(point)) outside quicklook word"
+                )
+                return nil
+            }
+
+            TerminalDebugLog.log(
+                .input,
+                "selection menu hit point=\(selectionPointDescription(point))"
+            )
+            return point
+        }
+
+        open func selectionContextMenu() -> NSMenu {
+            let menu = NSMenu()
+            let copyItem = NSMenuItem(
+                title: "Copy",
+                action: #selector(copy(_:)),
+                keyEquivalent: ""
+            )
+            copyItem.target = self
+            menu.addItem(copyItem)
+            return menu
+        }
+
+        @discardableResult
+        open func copySelectedTextToPasteboard() -> Bool {
+            guard surface?.hasSelection() == true else {
+                return false
+            }
+            guard surface?.performBindingAction("copy_to_clipboard") == true else {
+                return false
+            }
+            TerminalDebugLog.log(
+                .input,
+                "selection copied to clipboard"
+            )
+            return true
+        }
+
+        private func selectionPointDescription(_ point: CGPoint) -> String {
+            "\(String(format: "%.2f", point.x))x\(String(format: "%.2f", point.y))"
         }
 
         deinit {

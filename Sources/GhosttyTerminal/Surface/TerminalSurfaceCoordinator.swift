@@ -64,6 +64,7 @@ final class TerminalSurfaceCoordinator {
 
     private var lastMetrics: TerminalViewportMetrics?
     private var isDisplayVisible = true
+    private var isApplicationActive = true
     private var isSurfaceFocused = false
     private var pendingImmediateTick = true
     private var lastTickTimestamp: TimeInterval = 0
@@ -103,6 +104,14 @@ final class TerminalSurfaceCoordinator {
             TerminalDebugLog.log(.lifecycle, "surface rebuild skipped: view detached")
             return
         }
+        guard hasValidViewSize else {
+            let size = viewSize()
+            TerminalDebugLog.log(
+                .lifecycle,
+                "surface rebuild skipped: invalid view size=\(String(format: "%.2f", size.width))x\(String(format: "%.2f", size.height))"
+            )
+            return
+        }
 
         let scale = scaleFactor()
         TerminalDebugLog.log(
@@ -123,14 +132,20 @@ final class TerminalSurfaceCoordinator {
         }
 
         bridge.rawSurface = rawSurface
-        surface = TerminalSurface(rawSurface)
-        surface?.setOcclusion(isDisplayVisible)
+        let newSurface = TerminalSurface(rawSurface)
+        surface = newSurface
+        newSurface.setOcclusion(effectiveSurfaceVisible)
+        controller.shouldProcessWakeup = { [weak self] in
+            self?.canRenderFrame == true
+        }
         controller.onWakeup = { [weak self] in
             self?.requestImmediateTick()
         }
-        requestImmediateTick()
         TerminalDebugLog.log(.lifecycle, "surface rebuild succeeded")
+        (delegate as? any TerminalSurfaceLifecycleDelegate)?
+            .terminalDidAttachSurface(newSurface)
         synchronizeMetrics()
+        requestImmediateTick()
     }
 
     // MARK: - Metrics
@@ -202,27 +217,53 @@ final class TerminalSurfaceCoordinator {
     }
 
     func fitToSize() {
-        synchronizeMetrics()
-        requestImmediateTick()
+        if surface == nil {
+            rebuildIfReady()
+        } else {
+            synchronizeMetrics()
+        }
+        if surface != nil {
+            requestImmediateTick()
+        }
     }
 
     func setDisplayVisible(_ visible: Bool) {
         guard isDisplayVisible != visible else {
-            surface?.setOcclusion(visible)
+            surface?.setOcclusion(effectiveSurfaceVisible)
             return
         }
 
         isDisplayVisible = visible
-        surface?.setOcclusion(visible)
+        surface?.setOcclusion(effectiveSurfaceVisible)
 
-        if visible {
-            if isAttached() {
-                requestImmediateTick()
-            }
+        if canRenderFrame {
+            requestImmediateTick()
         } else {
             stopDisplayLink()
         }
     }
+
+    func setApplicationActive(_ active: Bool) {
+        guard isApplicationActive != active else {
+            if active {
+                renderImmediately()
+            } else {
+                stopDisplayLink()
+            }
+            return
+        }
+
+        isApplicationActive = active
+        surface?.setOcclusion(effectiveSurfaceVisible)
+
+        if active {
+            synchronizeMetrics()
+            renderImmediately()
+        } else {
+            stopDisplayLink()
+        }
+    }
+
     // MARK: - Frame Rendering
 
     func tick(context: DisplayLinkCallbackContext) {
@@ -274,7 +315,9 @@ final class TerminalSurfaceCoordinator {
             session.clearSurface(ifMatches: surface?.rawValue)
         }
         controller?.onWakeup = nil
+        controller?.shouldProcessWakeup = nil
         bridge.rawSurface = nil
+        let hadSurface = surface != nil
         surface?.setFocus(false)
         surface?.free()
         surface = nil
@@ -282,6 +325,10 @@ final class TerminalSurfaceCoordinator {
         pendingImmediateTick = true
         lastTickTimestamp = 0
         controller?.remove(bridge)
+        if hadSurface {
+            (delegate as? any TerminalSurfaceLifecycleDelegate)?
+                .terminalDidDetachSurface()
+        }
     }
 
     private func handleCellSizeChange(width: UInt32, height: UInt32) {
@@ -294,15 +341,15 @@ final class TerminalSurfaceCoordinator {
         onCellSizeDidChange?()
     }
 
-    private func shouldRenderFrame(at timestamp: TimeInterval) -> Bool {
-        guard isDisplayVisible, isAttached() else {
+    private func shouldRenderFrame(at _: TimeInterval) -> Bool {
+        guard canRenderFrame else {
             return false
         }
         return pendingImmediateTick || lastTickTimestamp == 0
     }
 
     private func scheduleTickIfNeeded() {
-        guard isDisplayVisible, isAttached() else {
+        guard canRenderFrame else {
             tickScheduled = false
             return
         }
@@ -313,9 +360,9 @@ final class TerminalSurfaceCoordinator {
         TerminalDebugLog.log(.lifecycle, "tick scheduled")
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            self.tickScheduled = false
+            tickScheduled = false
             let timestamp = Self.monotonicTimestamp()
-            self.tick(
+            tick(
                 context: .init(
                     duration: 0,
                     timestamp: timestamp,
@@ -327,5 +374,36 @@ final class TerminalSurfaceCoordinator {
 
     private static func monotonicTimestamp() -> TimeInterval {
         ProcessInfo.processInfo.systemUptime
+    }
+
+    private var effectiveSurfaceVisible: Bool {
+        isDisplayVisible && isApplicationActive
+    }
+
+    private var canRenderFrame: Bool {
+        effectiveSurfaceVisible && isAttached()
+    }
+
+    private var hasValidViewSize: Bool {
+        let size = viewSize()
+        return size.width > 0 && size.height > 0
+    }
+
+    private func renderImmediately() {
+        guard canRenderFrame else {
+            tickScheduled = false
+            return
+        }
+
+        pendingImmediateTick = true
+        tickScheduled = false
+        let timestamp = Self.monotonicTimestamp()
+        tick(
+            context: .init(
+                duration: 0,
+                timestamp: timestamp,
+                targetTimestamp: timestamp
+            )
+        )
     }
 }

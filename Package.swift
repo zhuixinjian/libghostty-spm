@@ -4,9 +4,9 @@ import PackageDescription
 let package = Package(
     name: "GhosttyKit",
     platforms: [
-        .iOS(.v16),
+        .iOS(.v15),
         .macOS(.v13),
-        .macCatalyst(.v16),
+        .macCatalyst(.v15),
     ],
     products: [
         .library(name: "GhosttyKit", targets: ["GhosttyKit"]),
@@ -45,8 +45,8 @@ let package = Package(
         ),
         .binaryTarget(
             name: "libghostty",
-            url: "https://github.com/Lakr233/libghostty-spm/releases/download/storage.1.0.1773686495/GhosttyKit.xcframework.zip",
-            checksum: "ebd31d1839817b10aa92cef0402212bee5d901a03043513adf01e0623c6bee4d"
+            url: "https://github.com/Lakr233/libghostty-spm/releases/download/storage.1.2.9/GhosttyKit.xcframework.zip",
+            checksum: "0d5d461243d552fcdc4053934898c97b75a6cff6b356fe0fde57dec32ed7d651"
         ),
         .testTarget(
             name: "GhosttyKitTest",
