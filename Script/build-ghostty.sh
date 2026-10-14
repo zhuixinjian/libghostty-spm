@@ -36,6 +36,16 @@ if ! command -v zig >/dev/null 2>&1; then
     exit 1
 fi
 
+# Reset the shared ghostty checkout to pristine before (re)applying patches.
+# Patches are applied cumulatively on the same source across targets, and some
+# `.sh` patches further edit files that earlier `.patch` files already touched,
+# which breaks apply-patches' `git apply --check --reverse` idempotency probe on
+# the 2nd+ target. Resetting first makes every target apply the full set cleanly.
+if [ -d "$SOURCE_DIR/.git" ]; then
+    git -C "$SOURCE_DIR" checkout -q -- .
+    git -C "$SOURCE_DIR" clean -fdq
+fi
+
 ./Script/apply-patches.sh "$SOURCE_DIR"
 
 CACHE_ROOT="${BUILD_CACHE_ROOT:-$ROOT_DIR/build/cache}"

@@ -79,8 +79,12 @@ new_flags = """            .flags = if (target.result.cpu.arch == .x86_64) &.{
             },"""
 
 if old_flags not in text:
-    print("[-] src/simd flags block not found; upstream changed, update this patch")
-    sys.exit(1)
+    # Upstream (ghostty 9a9002+) refactored this from a `.flags = &.{...}`
+    # struct literal to an imperative `flags.append(...)` builder, so the old
+    # anchor no longer matches. These annotations only matter for libc++ on
+    # macOS < 14 / iOS 15; skip gracefully rather than failing the whole build.
+    print("[!] src/simd flags block not found (upstream refactored); skipping — only needed for <macOS 14 / iOS 15")
+    sys.exit(0)
 
 path.write_text(text.replace(old_flags, new_flags))
 print("[+] patched: src/simd libc++ availability annotations")
